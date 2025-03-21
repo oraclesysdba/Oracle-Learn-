@@ -186,6 +186,7 @@ Run utlrp.sql to check for errors:
 If errors occur on oracle database Component, use the following steps :
 
 SLECT COMP_NAME FROM DBA_REGISTRY WHERE STATUS='INVALID';
+https://oracle-base.com/blog/2025/03/10/when-oracle-database-release-updates-attack/?amp
 
 ******************************************************************************
 
