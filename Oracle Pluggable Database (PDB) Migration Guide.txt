@@ -144,9 +144,9 @@ SET ECHO ON;
 SET TIMING ON;
 CREATE PLUGGABLE DATABASE newpdb
 FROM pdbname@dbclone
-FILE_NAME_CONVERT = ('/u01/app/oracle/oradata/brblv_stg/brblv_stgpdb/','+DATA',
-                     '/u01/app/oracle/oradata/brblv_stg/pdbseed/','+DATA',
-                     '/u01/app/oracle/oradata/brblv_stg/','+DATA',
+FILE_NAME_CONVERT = ('/u01/app/oracle/oradata/stg/brblv_stgpdb/','+DATA',
+                     '/u01/app/oracle/oradata/stg/pdbseed/','+DATA',
+                     '/u01/app/oracle/oradata/stg/','+DATA',
                      '/u02/datafiles/','+DATA',
                      '/u03/datafiles/','+DATA',
                      '/u05/datafiles/','+DATA')
