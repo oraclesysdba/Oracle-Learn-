@@ -1,0 +1,252 @@
+++++++++++++++++++++++++++++++++++++++++++++++++
+Oracle Pluggable Database (PDB) Migration Guide
+++++++++++++++++++++++++++++++++++++++++++++++++
+
+Version: 1.0
+Author: Samson J
+Date: 21032025
+
+***********************************************************************************************************
+
+1.	Introduction
+2.	Workflow Tree
+3.	Step 1: Verify Old Primary Container Database
+4.	Step 2: Configure New Primary Container Database
+5.	Step 3: Create Pluggable Database (PDB)
+6.	Step 4: Open PDB and Apply Patches
+7.	Step 5: Set LOCAL_LISTENER
+8.	Conclusion
+
+
+**********************************************************************************************************
+
+$ Introduction
+
+This document provides a step-by-step guide to migrating an Oracle Pluggable Database (PDB) from an old primary container to a new primary container in an Oracle 19c environment.
+
+***********************
+Workflow Tree
+***********************
+1. Verify Old Primary Container Database
+   ├── Check database status
+   ├── Switch to the required container
+   ├── Create a user and grant privileges
+   ├── Retrieve and note datafile locations
+   ├── Change database mode to READ ONLY
+
+2. Configure New Primary Container Database
+   ├── Add TNS entry in tnsnames.ora
+   ├── Verify new primary database status
+   ├── Create database link to old database
+
+3. Create Pluggable Database (PDB)
+   ├── Create a shell script (create_pdb.sh)
+   ├── Execute the script to create the PDB
+
+4. Open PDB and Apply Patches
+   ├── Open the pluggable database
+   ├── Apply patches using datapatch
+   ├── Run utlrp.sql for validation
+   ├── Perform necessary database upgrade steps
+   ├── Recompile invalid objects
+   ├── Restart the database
+
+5. Set LOCAL_LISTENER
+   ├── Set LOCAL_LISTENER parameter
+   ├── Register the listener
+________________________________________________________________________________
+
+Step 1: Verify Old Primary Container Database
+
+Connect to the old primary container database and verify its 
+
+SELECT name, open_mode, database_role, cdb FROM v$database;
+
+##Switch to the required container:
+
+SQL>ALTER SESSION SET CONTAINER=&con_name;
+
+Create a user with necessary privileges:
+
+CREATE USER supernovaclone IDENTIFIED BY oracle;
+
+GRANT CREATE SESSION, CREATE PLUGGABLE DATABASE TO supernovaclone;
+
+Retrieve the datafile locations:
+===============================
+
+SELECT name FROM v$datafile;
+📌 Note: Save the datafile locations for reference.
+
+Change the database mode:
+****************************
+
+SHUTDOWN IMMEDIATE;
+STARTUP MOUNT;
+ALTER DATABASE OPEN READ ONLY;
+________________________________________________________________________________
+
+
+Step 2: Configure New Primary Container Database
+
+
+Edit the tnsnames.ora file on the 19c server:
+
+
+orcl.example.com =
+  (DESCRIPTION =
+    (ADDRESS_LIST =
+      (ADDRESS = (PROTOCOL = TCP)(HOST = myserver.example.com)(PORT = 1521))
+    )
+    (CONNECT_DATA =
+      (SERVICE_NAME = orcl)
+    )
+  )
+
+
+Verify the new primary database status:
+
+
+SQL>SELECT name, open_mode, database_role, cdb FROM v$database;
+SQL>Create a database link to the old primary database:
+
+
+CREATE DATABASE LINK dbclone
+CONNECT TO supernovaclone IDENTIFIED BY oracle
+USING '&tnsname';
+________________________________________
+
+Step 3: Create Pluggable Database (PDB)
+
+Create a shell script named create_pdb.sh:
+
+
+vi create_pdb.sh
+Insert the following script content:
+
+
+#!/bin/bash
+
+# Load Oracle Environment Variables
+. .profile
+
+# Log File
+LOG_FILE=/tmp/create_pdb.log
+
+# Start Time
+echo "====================" | tee -a $LOG_FILE
+echo "Start Time: $(date)" | tee -a $LOG_FILE
+echo "Creating Pluggable Database..." | tee -a $LOG_FILE
+
+# Execute SQL Command
+sqlplus -s / as sysdba <<EOF >> $LOG_FILE 2>&1
+SET ECHO ON;
+SET TIMING ON;
+CREATE PLUGGABLE DATABASE newpdb
+FROM pdbname@dbclone
+FILE_NAME_CONVERT = ('/u01/app/oracle/oradata/brblv_stg/brblv_stgpdb/','+DATA',
+                     '/u01/app/oracle/oradata/brblv_stg/pdbseed/','+DATA',
+                     '/u01/app/oracle/oradata/brblv_stg/','+DATA',
+                     '/u02/datafiles/','+DATA',
+                     '/u03/datafiles/','+DATA',
+                     '/u05/datafiles/','+DATA')
+PARALLEL;
+EXIT;
+EOF
+
+# End Time
+echo "End Time: $(date)" | tee -a $LOG_FILE
+echo "Pluggable Database creation completed." | tee -a $LOG_FILE
+Run the script:
+bash
+CopyEdit
+chmod +x create_pdb.sh
+./create_pdb.sh
+
+nohup ./create_pdb.sh > /tmp/pdb_creation.log 2>&1 &
+
+________________________________________
+
+Step 4: Open PDB and Apply Patches
+Open the PDB:
+
+SQL>ALTER DATABASE OPEN;
+
+Apply patches using datapatch:
+
+cd $ORACLE_HOME/OPatch
+./datapatch -verbose
+
+
+Run utlrp.sql to check for errors:
+
+
+@?/rdbms/admin/utlrp.sql
+
+If errors occur on oracle database Component, use the following steps :
+
+SLECT COMP_NAME FROM DBA_REGISTRY WHERE STATUS='INVALID';
+
+******************************************************************************
+
+sqlplus / as sysdba <<EOF
+alter pluggable database all close;
+alter pluggable database all open upgrade;
+exit;
+EOF
+
+$ORACLE_HOME/perl/bin/perl $ORACLE_HOME/rdbms/admin/catctl.pl -d \
+  $ORACLE_HOME/rdbms/admin -C 'CDB$ROOT PDB$SEED' -l $ORACLE_BASE catupgrd.sql
+
+sqlplus / as sysdba <<EOF
+alter pluggable database all open read write;
+exit;
+EOF
+
+$ORACLE_HOME/perl/bin/perl \
+    -I$ORACLE_HOME/perl/lib \
+    -I$ORACLE_HOME/rdbms/admin \
+    $ORACLE_HOME/rdbms/admin/catcon.pl \
+    -l /tmp/ \
+    -b postpatch_${ORACLE_SID}_recompile \
+    -C 'PDB$SEED' \
+    $ORACLE_HOME/rdbms/admin/utlrp.sql
+
+cd $ORACLE_HOME/OPatch
+./datapatch -verbose
+
+$ORACLE_HOME/perl/bin/perl \
+    -I$ORACLE_HOME/perl/lib \
+    -I$ORACLE_HOME/rdbms/admin \
+    $ORACLE_HOME/rdbms/admin/catcon.pl \
+    -l /tmp/ \
+    -b postpatch_${ORACLE_SID}_recompile \
+    -C 'PDB$SEED' \
+    $ORACLE_HOME/rdbms/admin/utlrp.sql
+
+sqlplus / as sysdba <<EOF
+shutdown immediate;
+startup;
+show pdbs;
+EOF
+
+select name, cause, type, message, status, action from PDB_PLUG_IN_VIOLATIONS where type like 'ERROR%' and status like 'PENDING' 
+________________________________________
+Step 5: Set LOCAL_LISTENER
+Set the LOCAL_LISTENER parameter:
+
+
+ALTER SYSTEM SET LOCAL_LISTENER = '(ADDRESS = (PROTOCOL = TCP)(HOST = localhost)(PORT = 9004))' SCOPE=BOTH;
+ALTER SYSTEM REGISTER;
+________________________________________
+
+
+Conclusion
+
+
+This guide provides a structured approach for:
+✅ Verifying the old primary database
+✅ Setting up a new primary database
+✅ Creating a database link
+✅ Migrating a PDB
+✅ Applying patches and recompiling objects
